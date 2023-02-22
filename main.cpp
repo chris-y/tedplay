@@ -15,12 +15,13 @@ static AudioSDL *player;
 
 static void loop()
 {
-	char c;
+	char c = 0;
 	int quit = 0;
+	uint32_t startTime = SDL_GetTicks();
 
 	do {
 		SDL_Delay(50);
-		c = getchar();
+//		c = getchar();
 		switch (c) {
 			default:
 				if (isalpha(c)) {
@@ -77,6 +78,7 @@ static void loop()
 				quit = 1;
 				break;
 		}
+		if((SDL_GetTicks() - startTime) > (300 * 1000)) quit = 1;
 	} while(!quit && c != EOF);
 }
 
