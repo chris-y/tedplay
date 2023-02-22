@@ -1,6 +1,6 @@
 #CXX := g++
 CXXFLAGS += -Wall -Os
-LIBS += -lm -lSDL2
+LIBS += -lm -lSDL2 -ldl
 
 OBJECTS := Audio.o AudioSDL.o CbmTune.o Cpu.o Filter.o Sid.o SIDSoundLib.o Tedmem.o Tedsound.o main.o tedplay.o
 
