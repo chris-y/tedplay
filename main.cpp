@@ -97,10 +97,12 @@ int main(int argc, char *argv[])
 	unsigned int defaultFreq = 48000;
 	int retval = tedplayMain(argv[1],
 		player = new AudioSDL((void *) machineInit(defaultFreq, 24), defaultFreq, 100));
+	tedPlayCreateWav("/tmp/tedplay.wav"); // CY
 	if (0 == retval) {
 		printPsidInfo(getPsidHeader());
 		loop();
 		tedplayClose();
 	}
+	tedPlayCloseWav(); // CY
     return retval;
 }
