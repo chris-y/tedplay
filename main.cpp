@@ -78,7 +78,7 @@ static void loop()
 				quit = 1;
 				break;
 		}
-		if((SDL_GetTicks() - startTime) > (300 * 1000)) quit = 1;
+		if((SDL_GetTicks() - startTime) > (150 * 1000)) quit = 1;
 	} while(!quit && c != EOF);
 }
 
