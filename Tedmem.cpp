@@ -119,7 +119,7 @@ TED::TED() : filter(0), sidCard(0)
 	CycleCounter = 0;
 	oscillatorInit();
 	memset(protectedPlayerMemory, 0xfe, sizeof(protectedPlayerMemory));
-	enableSidCard(true, 0);
+	enableSidCard(1, 0);
 }
 
 void TED::Reset()
@@ -1363,22 +1363,31 @@ void TED::enableChannel(unsigned int channel, bool enable)
 	if (sidCard) sidCard->enableDisableChannel(channel, enable);
 }
 
-void TED::enableSidCard(bool enable, unsigned int disableMask)
+unsigned int TED::enableSidCard(unsigned int sidEmuType_, unsigned int disableMask)
 {
-	if (enable) {
-		if (sidCard)
-			return;
-		if (SIDSoundLib::connect())
+	if (sidEmuType_) {
+		if (sidEmuType != sidEmuType_) {
+			delete sidCard;
+			sidCard = 0;
+		} else
+			return sidEmuType;
+		if (sidEmuType_ == 2 && SIDSoundLib::connect()) {
 			sidCard = new SIDSoundLib(SID8580);
-		else
+			sidEmuType = 2;
+		}
+		else {
 			sidCard = new SIDsound(SID8580, disableMask);
+			sidEmuType = 1;
+		}
 		sidCard->setSampleRate(TED_SOUND_CLOCK);
 	} else {
 		if (!sidCard)
-			return;
+			return 0;
 		delete sidCard;
 		sidCard = 0;
+		sidEmuType = 0;
 	}
+	return sidEmuType;
 }
 
 TED::~TED()
@@ -1387,7 +1396,7 @@ TED::~TED()
 		delete filter;
 
 	if (sidCard)
-		enableSidCard(false, 0);
+		enableSidCard(0, 0);
 
 }
 

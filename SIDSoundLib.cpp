@@ -30,14 +30,17 @@ typedef void (*_sidPause)();
 typedef void (*_sidWriteReg)(unsigned int reg, unsigned char value);
 typedef unsigned char (*_sidReadReg)(unsigned int reg);
 typedef void (*_sidCalcSamples)(short* buf, long count);
+typedef const char *(*_sidGetLibVersion)();
 static _sidCreate sidCreate = NULL;
 static _sidDestroy sidDestroy = NULL;
 static _sidSetSampleRate sidSetSampleRate = NULL;
+static _sidSetSampleRate sidSetModel = NULL;
 static _sidReset sidReset = NULL;
 static _sidPause sidPause = NULL;
 static _sidWriteReg sidWriteReg = NULL;
 static _sidReadReg sidReadReg = NULL;
 static _sidCalcSamples sidCalcSamples = NULL;
+static _sidGetLibVersion sidGetLibVersion = NULL;
 bool SIDSoundLib::detected = false;
 
 bool SIDSoundLib::connect()
@@ -53,12 +56,15 @@ bool SIDSoundLib::connect()
 			sidCreate = (_sidCreate)LOAD_FUNCTION(m_hDll, "sidCreate");
 			sidDestroy = (_sidDestroy)LOAD_FUNCTION(m_hDll, "sidDestroy");
 			sidSetSampleRate = (_sidSetSampleRate)LOAD_FUNCTION(m_hDll, "sidSetSampleRate");
+			sidSetModel = (_sidSetSampleRate)LOAD_FUNCTION(m_hDll, "sidSetModel");
 			sidReset = (_sidReset)LOAD_FUNCTION(m_hDll, "sidReset");
 			sidPause = (_sidPause)LOAD_FUNCTION(m_hDll, "sidPause");
 			sidWriteReg = (_sidWriteReg)LOAD_FUNCTION(m_hDll, "sidWriteReg");
 			sidReadReg = (_sidReadReg)LOAD_FUNCTION(m_hDll, "sidReadReg");
 			sidCalcSamples = (_sidCalcSamples)LOAD_FUNCTION(m_hDll, "sidCalcSamples");
-			if (!(sidCreate && sidDestroy && sidSetSampleRate && sidReset && sidPause && sidWriteReg && sidReadReg && sidCalcSamples))
+			sidGetLibVersion = (_sidGetLibVersion)LOAD_FUNCTION(m_hDll, "sidGetLibVersion");
+			if (!(sidCreate && sidDestroy && sidSetSampleRate && sidSetModel && sidReset && sidPause
+				&& sidWriteReg && sidReadReg && sidCalcSamples && sidGetLibVersion))
 				return false;
 		} else
 			return false;
@@ -94,11 +100,13 @@ void SIDSoundLib::setSampleRate(unsigned int sampleRate)
 	sidSetSampleRate(sampleRate);
 }
 
-void SIDSoundLib::SetModel(unsigned int model)
+void SIDSoundLib::setModel(unsigned int model)
 {
-	sidDestroy();
-	sidCreate(sidBaseFreq, model, sidBaseFreq);
-	model_ = model;
+	if (model_ != model) {
+		sidSetModel(model);
+		sidReset();
+		model_ = model;
+	}
 }
 
 void SIDSoundLib::setFrequency(unsigned int frq)
@@ -119,4 +127,9 @@ void SIDSoundLib::write(unsigned int adr, unsigned char byte)
 unsigned char SIDSoundLib::read(unsigned int adr)
 {
 	return sidReadReg(adr & 0x1F);
+}
+
+const char* SIDSoundLib::getSidEngineName()
+{
+	return sidGetLibVersion();
 }

@@ -13,10 +13,12 @@
 #include "CFileOpenDialog.h"
 #include "PropertiesDlg.h"
 #include "PropSheet.h"
+#include "ScrnFrm.h"
 
 #include "Audio.h"
 #include "Psid.h"
 #include "TedPlay.h"
+#include "SIDSoundLib.h"
 
 #include "registry.h"
 #ifdef _DEBUG
@@ -75,6 +77,8 @@ LRESULT CMainFrame::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lPar
 	//	IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR | LR_LOADTRANSPARENT);
 	//btnTemp.Attach(GetDlgItem(IDC_BUTTON_TEST));
 	//btnTemp.SetIcon(hicon);
+	if (SIDSoundLib::connect())
+		EnableMenuItem(GetMenu(), ID_TOOLS_SID_RESID, MF_ENABLED);
 
 	// Edit controls
 	stTitle.Attach(GetDlgItem(IDC_EDIT_MODULE));
@@ -177,8 +181,12 @@ LRESULT CMainFrame::OnDestroy(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*
 	setRegistryValue(_T("ShowPlayList"), regVal);
 	regVal = ::IsWindowVisible(GetDlgItem(IDC_WAVEOUT));
 	setRegistryValue(_T("ShowWavePlotter"), regVal);
-	regVal = GetMenuState(GetMenu(), ID_TOOLS_DISABLESID, MF_BYCOMMAND) == MF_CHECKED;
-	setRegistryValue(_T("DisableSID"), regVal);
+	regVal = GetMenuState(GetMenu(), ID_TOOLS_SID_YAPE, MF_BYCOMMAND) == MF_CHECKED ? 1 :0 +
+		GetMenuState(GetMenu(), ID_TOOLS_SID_RESID, MF_BYCOMMAND) == MF_CHECKED ? 2 : 0;
+	setRegistryValue(_T("EnableSid"), regVal);
+	regVal = GetMenuState(GetMenu(), ID_SIDMODEL_FORCE6581, MF_BYCOMMAND) == MF_CHECKED ? 1 : 0 +
+		GetMenuState(GetMenu(), ID_SIDMODEL_FORCE8580, MF_BYCOMMAND) == MF_CHECKED ? 2 : 0;
+	setRegistryValue(_T("SidModel"), regVal);
 	//
 	bHandled = FALSE;
 	DestroyWindow();
@@ -235,22 +243,10 @@ LRESULT CMainFrame::OnTrackBar(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bH
 			} // end switch
 			switch (i) {
 				case 0:
-					if (tedPlayGetState()) {
-						tedplayPause();
-						tedPlaySetVolume(value);
-						tedplayPlay();
-					} else {
-						tedPlaySetVolume(value);
-					}
+					tedPlaySetVolume(value);
 					break;
 				case 1:
-					if (tedPlayGetState()) {
-						tedplayPause();
-						tedPlaySetSpeed(value);
-						tedplayPlay();
-					} else {
-						tedPlaySetSpeed(value);
-					}
+					tedPlaySetSpeed(value);
 					break;
 				default: ;
 			}
@@ -332,7 +328,7 @@ void CMainFrame::updateWaveOutWindow(bool updatePosition)
 		}
 	}
 	// update sample history, convert to coordinate
-	if (updatePosition && tedPlayGetState()) {
+	if (updatePosition && tedPlayGetState() == 1) {
 #if 0
 		unsigned int i;
 		int sample = ((tedPlayGetLastSample() + 8192) * wHeight) / 16384;
@@ -449,7 +445,7 @@ LRESULT CMainFrame::OnFileExit(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCt
 LRESULT CMainFrame::OnFileNew(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
 {
 	static unsigned int selFilter = 0;
-	_TCHAR szFilter[] = _T("All suported formats (*.tmf;*.c8m;*.prg;*.sid)\0"
+	_TCHAR szFilter[] = _T("All supported formats (*.tmf;*.c8m;*.prg;*.sid)\0"
 						   "*.tmf;*.c8m;*.prg;*.sid\0"
 						   "TED tunes (*.tmf;*.c8m;*.prg)\0"
 						   "*.tmf;*.c8m;*.prg\0"
@@ -717,19 +713,25 @@ LRESULT CMainFrame::OnToolsResetplayer(WORD /*wNotifyCode*/, WORD /*wID*/, HWND 
 	return 0;
 }
 
-LRESULT CMainFrame::OnToolsDisablesid(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
+LRESULT CMainFrame::OnToolsSetSid(WORD /*wNotifyCode*/, WORD wID, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
 {
 	bool wasPlaying = tedPlayGetState() == 1;
 	if (wasPlaying) tedplayPause();
-	if (!GetMenuState(GetMenu(), ID_TOOLS_DISABLESID, MF_BYCOMMAND)) {
-		tedPlaySidEnable(false, 0);
+	if (wID == ID_TOOLS_DISABLESID) {
+		tedPlaySidEnable(0, 0);
 		::CheckMenuItem(GetMenu(), ID_TOOLS_DISABLESID, MF_CHECKED);
+		::CheckMenuItem(GetMenu(), ID_TOOLS_SID_YAPE, MF_UNCHECKED);
+		::CheckMenuItem(GetMenu(), ID_TOOLS_SID_RESID, MF_UNCHECKED);
 	} else {
+		unsigned int type = wID - ID_TOOLS_DISABLESID;
 		unsigned int enabled = cbChannels[0].GetCheck();
 		enabled = enabled|(cbChannels[1].GetCheck() << 1);
 		enabled = enabled|(cbChannels[2].GetCheck() << 2);
-		tedPlaySidEnable(true, ~enabled);
+		unsigned int r = tedPlaySidEnable(type, ~enabled);
 		::CheckMenuItem(GetMenu(), ID_TOOLS_DISABLESID, MF_UNCHECKED);
+		::CheckMenuItem(GetMenu(), ID_TOOLS_SID_YAPE, MF_UNCHECKED);
+		::CheckMenuItem(GetMenu(), ID_TOOLS_SID_RESID, MF_UNCHECKED);
+		::CheckMenuItem(GetMenu(), ID_TOOLS_DISABLESID + r, MF_CHECKED);
 	}
 	if (wasPlaying) tedplayPlay();
 	return 0;
@@ -772,7 +774,7 @@ LRESULT CMainFrame::OnToolsOptions(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hW
 				SetTimer(0, vAutoSkipInterval * 1000);
 		}
 		if (restartReqd) {
-			MessageBox(_T("For the changes to take effect you have restart the application!"), _T("Warning!"), 
+			MessageBox(_T("For the changes to take effect you must restart the application!"), _T("Warning!"), 
 				MB_OK | MB_ICONINFORMATION);
 		} else {
 			//
@@ -808,12 +810,31 @@ LRESULT CMainFrame::OnViewShowwaveplotter(WORD /*wNotifyCode*/, WORD /*wID*/, HW
 {
 	HWND wpHwnd = GetDlgItem(IDC_WAVEOUT);
 	BOOL wasVisible = ::IsWindowVisible(wpHwnd);
-	// TODO: Add your command handler code here
+
 	if (wasVisible) {
 		::ShowWindow(wpHwnd, SW_HIDE);
 	} else {
 		::ShowWindow(wpHwnd, SW_SHOWNA);
 	}
 	::CheckMenuItem(GetMenu(), ID_VIEW_SHOWWAVEPLOTTER, wasVisible ? MF_UNCHECKED : MF_CHECKED);
+	return 0;
+}
+
+LRESULT CMainFrame::OnSetSidModel(WORD /*wNotifyCode*/, WORD wID, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
+{
+	unsigned int selection = GetMenuState(GetMenu(), ID_SIDMODEL_FORCE6581, MF_BYCOMMAND) == MF_CHECKED ? 1 : 0 +
+		GetMenuState(GetMenu(), ID_SIDMODEL_FORCE8580, MF_BYCOMMAND) == MF_CHECKED ? 2 : 0;
+	::CheckMenuItem(GetMenu(), ID_SIDMODEL_AUTO + selection, MF_UNCHECKED);
+	::CheckMenuItem(GetMenu(), wID, MF_CHECKED);
+
+	tedPlaySidModelSelection(wID - ID_SIDMODEL_AUTO);
+
+	return 0;
+}
+
+LRESULT CMainFrame::OnViewShowscreen(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
+{
+	CScreenDlg scrnDlg;
+	scrnDlg.DoModal();
 	return 0;
 }
