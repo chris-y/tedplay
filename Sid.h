@@ -57,6 +57,7 @@ private:
 		int egState;			// state of the EG
 		SIDVoice *modulatedBy;	// the voice that modulates this one
 		SIDVoice *modulatesThis;// the voice that is modulated by this one
+		bool msbAccuRisingEdge; // Flag if sync can occur
 
 		unsigned int accu;		// accumulator of the waveform generator, 8.16 fixed
 		unsigned int accPrev;	// previous accu value (for ring modulation)
@@ -70,10 +71,11 @@ private:
 		unsigned int envDecaySub;
 		unsigned int envSustainLevel;
 		unsigned int envReleaseSub;
-		unsigned int envCurrLevel;
+		unsigned char envCurrLevel; // envelope is 8 bits
 		unsigned int envCounter;
 		unsigned int envExpCounter;
-		unsigned int envCounterCompare;
+		unsigned char envCounterCompare;
+		unsigned char envNewCounterCompare;
 
 		unsigned int gate;		// EG gate flag
 		unsigned int ring;		// ring modulation flag
@@ -81,6 +83,11 @@ private:
 		unsigned int filter;	// voice filtered flag
 		unsigned int muted;		// voice muted flag (only for 3rd voice)
 		bool		disabled;	// voice disabled
+
+		inline void doOscillator();
+		inline void updateShiftReg();
+		inline void applySync();
+		inline int doEnvelopeGenerator(const unsigned int cycles);
 
 		// This bit is set for the modulating voice, 
 		// not for the modulated one (compared to the real one)
@@ -105,11 +112,9 @@ private:
 	inline static int waveTriPulse(SIDVoice &v);
 	inline static int waveSawPulse(SIDVoice &v);
 	inline static int waveTriSawPulse(SIDVoice &v);
-	inline static int waveNoise(SIDVoice &v);
+	inline static int waveNoise(unsigned int shiftReg);
 	inline static int getWaveSample(SIDVoice &v);
-	inline void updateShiftReg(SIDVoice &v);
 	// Envelope
-	inline int doEnvelopeGenerator(unsigned int cycles, SIDVoice &v);
 	static const unsigned int RateCountPeriod[16]; // Factors for A/D/S/R Timing
 	static const unsigned char envGenDRdivisors[256]; // For exponential approximation of D/R
 	static unsigned int masterVolume;

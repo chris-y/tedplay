@@ -229,3 +229,6 @@ win/TedPlayWTL.VS10.sln.old
 *.dll
 *.vsidx
 *.o
+tedplay
+/.vs
+/win/.vs/TedPlayWTL.VS14/v17

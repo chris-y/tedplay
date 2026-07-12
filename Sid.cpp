@@ -29,9 +29,8 @@ inline static long bit(long val, unsigned int bitnr)
 	return (val >> bitnr) & 1;
 }
 
-inline void SIDsound::updateShiftReg(SIDVoice &v)
+inline void SIDsound::SIDVoice::updateShiftReg()
 {
-	unsigned int &shiftReg = v.shiftReg;
 	unsigned int bit22 = bit(shiftReg,22);
 	unsigned int bit17 = bit(shiftReg,17);
 
@@ -41,22 +40,22 @@ inline void SIDsound::updateShiftReg(SIDVoice &v)
 	// Feed bit 0
 	shiftReg = shiftReg | (bit22 ^ bit17);
 	// Store output
-	v.waveNoiseOut = waveNoise(v);
+	waveNoiseOut = waveNoise(shiftReg);
 }
 
-inline int SIDsound::waveNoise(SIDVoice &v)
+inline int SIDsound::waveNoise(unsigned int shiftReg)
 {
-	unsigned int shiftReg = v.shiftReg;
 	// Pick out bits to make output value, left shift by 4
 	return
-		(bit(shiftReg,22) << 11) |
-		(bit(shiftReg,20) << 10) |
-		(bit(shiftReg,16) << 9) |
-		(bit(shiftReg,13) << 8) |
-		(bit(shiftReg,11) << 7) |
-		(bit(shiftReg, 7) << 6) |
-		(bit(shiftReg, 4) << 5) |
-		(bit(shiftReg, 2) << 4);
+		// https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals%20-%20Noise%20Generator
+		(bit(shiftReg, 20) << 11) |
+		(bit(shiftReg, 18) << 10) |
+		(bit(shiftReg, 14) << 9) |
+		(bit(shiftReg, 11) << 8) |
+		(bit(shiftReg, 9) << 7) |
+		(bit(shiftReg, 5) << 6) |
+		(bit(shiftReg, 2) << 5) |
+		(bit(shiftReg, 0) << 4);
 };
 
 void SIDsound::setModel(unsigned int model)
@@ -208,7 +207,7 @@ void SIDsound::reset(void)
 		voice[v].shiftReg = 0x7FFFFC;
 		voice[v].envExpCounter = 0;
 		voice[v].envAttackAdd = voice[v].envDecaySub = voice[v].envReleaseSub = 0;
-		voice[v].envCounterCompare = 0;
+		voice[v].envCounterCompare = voice[v].envNewCounterCompare = 0;
 		voice[v].envCounter = 0x7fff;
 	}
 
@@ -417,6 +416,7 @@ inline void SIDsound::setFilterCutoff()
 	const double maxCutOff = NyquistFrq > 16000.0 ? 16000.0 : NyquistFrq;
 	const int w0MaxDt = int(maxCutOff * freqDomainDivCoeff); // 16000
 	if (w0 > w0MaxDt) w0 = w0MaxDt;
+	w0 >>= 6;
 }
 
 inline void SIDsound::setResonance()
@@ -440,7 +440,7 @@ inline unsigned int SIDsound::clock()
 // simplified version of http://bel.fi/~alankila/c64-sw/index-cpp.html
 inline int SIDsound::filterOutput(unsigned int cycles, int Vi)
 {
-	const int w0deltaTime = w0 >> 6;
+	const int w0deltaTime = w0;
 	Vi >>= 7;
 	unsigned int count = cycles;
 
@@ -486,57 +486,102 @@ inline int SIDsound::filterOutput(unsigned int cycles, int Vi)
 
 // Envelope based on:
 // http://blog.kevtris.org/?p=13
-inline int SIDsound::doEnvelopeGenerator(unsigned int cycles, SIDVoice &v)
+inline int SIDsound::SIDVoice::doEnvelopeGenerator(const unsigned int cycles)
 {
 	unsigned int count = cycles;
 
 	do {
-		unsigned int LFSR = v.envCounter;
-		if (LFSR != RateCountPeriod[v.envCounterCompare & 0x0f]) {
-			const unsigned int feedback = ((LFSR >> 14) ^ (LFSR >> 13)) & 1;
-			LFSR = ((LFSR << 1) | feedback) & 0x7FFF;
-			v.envCounter = LFSR;
-		} else {
+		unsigned int LFSR = envCounter;
+		const unsigned int feedback = ((LFSR >> 14) ^ (LFSR >> 13)) & 1;
+		LFSR = ((LFSR << 1) | feedback) & 0x7FFF;
+		envCounter = LFSR;
+		if (LFSR == RateCountPeriod[envNewCounterCompare]) {
 			// LFSR = 0x7fff reset LFSR
-			v.envCounter = 0x7fff;
+			envCounter = 0x7fff;
 
-			if (v.egState == EG_ATTACK || ++v.envExpCounter == envGenDRdivisors[v.envCurrLevel & 0xff]) {
+			if (egState == EG_ATTACK || ++envExpCounter == envGenDRdivisors[envCurrLevel]) {
 
-				v.envExpCounter = 0;
+				envExpCounter = 0;
 
-				switch (v.egState) {
+				switch (egState) {
 
 				case EG_ATTACK:
 					// According to Bob Yannes, Attack is linear...
-					if ( ((++v.envCurrLevel) & 0xFF) == 0xFF) {
-						v.egState = EG_DECAY;
-						v.envCounterCompare = v.envDecaySub;
+					if (++envCurrLevel == 0xFF) {
+						egState = EG_DECAY;
+						envCounterCompare = envDecaySub;
 					}
 					break;
 
 				case EG_DECAY:
-					if (v.envCurrLevel != v.envSustainLevel) {
-						--v.envCurrLevel &= 0xFF;
-						if (!v.envCurrLevel)
-							v.egState = EG_FROZEN;
+					if (envCurrLevel != envSustainLevel) {
+						if (envCurrLevel) {
+							--envCurrLevel;
+							if (!envCurrLevel)
+								egState = EG_FROZEN;
+						}
 					}
 					break;
 
 				case EG_RELEASE:
-					v.envCurrLevel = (v.envCurrLevel - 1) & 0xFF;
-					if (!v.envCurrLevel)
-						v.egState = EG_FROZEN;
+					if (envCurrLevel) {
+						envCurrLevel -= 1;
+						if (!envCurrLevel)
+							egState = EG_FROZEN;
+					}
 					break;
 
 				case EG_FROZEN:
-					v.envCurrLevel = 0;
+					envCurrLevel = 0;
 					break;
 				}
 			}
+			envNewCounterCompare = envCounterCompare;
 		}
 	} while (--count);
 
-	return v.envCurrLevel & 0xFF; // envelope is 8 bits
+	return envCurrLevel;
+}
+
+inline void SIDsound::SIDVoice::doOscillator()
+{
+	// Waveform generator
+	if (!test && freq) {
+		accPrev = accu;
+		// Update accumulator
+		// accu is 24 bit
+		accu = (accu + freq) & 0xFFFFFF;
+		msbAccuRisingEdge = !(accPrev & 0x800000) && (accu & 0x800000);
+		// Update noise shift register
+		if (!(accPrev & 0x080000) && (accu & 0x080000))
+			updateShiftReg();
+	}
+}
+
+inline void SIDsound::SIDVoice::applySync()
+{
+	// FIXME Apply syncing
+#if 1
+	if (sync && modulatedBy->msbAccuRisingEdge
+		&& !(modulatesThis->sync && !(modulatesThis->modulatedBy->msbAccuRisingEdge))
+		)
+		accu = 0;
+#else
+	if (v.sync && !(accPrev & 0x800000) && (v.accu & 0x800000)
+		/*&& !(v.modulatedBy->sync && !(v.modulatedBy->accPrev & 0x80000) &&
+			((v.modulatedBy->accu + add) & 0x80000))*/
+		)
+	{
+		if (j > v.modulatesThis->index) {
+			v.modulatesThis->accu = (accPrev - 0x8000000) & 0xFFFFFFF;
+		}
+		else {
+			unsigned int addModulating = v.modulatesThis->accu > v.modulatesThis->accPrev ? 0 : 0x8000000;
+			addModulating += v.modulatesThis->accu - v.modulatesThis->accPrev;
+			v.modulatesThis->accu = (accPrev + addModulating - 0x8000000) & 0xFFFFFFF;
+		}
+	}
+#endif
 }
 
 void SIDsound::calcSamples(short *buf, long accu)
@@ -548,55 +593,22 @@ void SIDsound::calcSamples(short *buf, long accu)
 
 		const unsigned int cyclesToDo = clock();
 		// Loop for the three voices
-		unsigned int j = 2;
+		unsigned int j = cyclesToDo;
 		do {
-			SIDVoice &v = voice[j];
-			const unsigned int freq = v.freq;
-			// Waveform generator
-			if (!v.test && freq) {
-				unsigned int accPrev = v.accu;
-				v.accPrev = accPrev;
-				// Update accumulator
-				const unsigned int add = freq * cyclesToDo;
-				v.accu += add;
-				// FIXME Apply syncing
-#if 1
-				if (v.modulatesThis->sync && !(v.accPrev & 0x800000) && (v.accu & 0x800000)
-           			)
-					v.modulatesThis->accu = (v.accu - 0x800000) & 0xFFFFFF;
-#else
-				if (v.sync && !(accPrev & 0x800000) && (v.accu & 0x800000)
-					/*&& !(v.modulatedBy->sync && !(v.modulatedBy->accPrev & 0x80000) &&
-						((v.modulatedBy->accu + add) & 0x80000))*/
-           			)
-				{
-					if (j > v.modulatesThis->index) {
-						v.modulatesThis->accu = (accPrev - 0x8000000) & 0xFFFFFFF;
-					} else {
-						unsigned int addModulating = v.modulatesThis->accu > v.modulatesThis->accPrev ? 0 : 0x8000000;
-						addModulating += v.modulatesThis->accu - v.modulatesThis->accPrev;
-						v.modulatesThis->accu = (accPrev + addModulating - 0x8000000) & 0xFFFFFFF;
-					}
-				}
-#endif
-				// noise shift register is updating even when waveform is not selected
-				unsigned int accNext = accPrev;
-				do {
-					accNext += freq;
-					// Update noise shift register
-					if (!(accPrev & 0x080000) && (accNext & 0x080000))
-						updateShiftReg(v);
-					accPrev = accNext;
-				} while (accNext < v.accu);
-				// accu is 24 bit
-				v.accu &= 0xFFFFFF;
-			}
-		} while (j--);
+			voice[0].doOscillator();
+			voice[1].doOscillator();
+			voice[2].doOscillator();
+			// Perform sync
+			voice[0].applySync();
+			voice[1].applySync();
+			voice[2].applySync();
+		} while (--j);
+		
 		j = 2;
 		do {
 			SIDVoice &v = voice[j];
 			int output = v.disabled ? 0x0000 : getWaveSample(v);
-			int envelope = doEnvelopeGenerator(cyclesToDo, v);
+			int envelope = v.doEnvelopeGenerator(cyclesToDo);
 			
 			if (v.filter)
 				sumFilteredOutput += (output - dcWave) * envelope + dcVoice;
@@ -612,7 +624,7 @@ void SIDsound::calcSamples(short *buf, long accu)
 			+ dcMixer + dcDigiBlaster) * volume;
 
 #if 1
-		int sample = accu >> 13;
+		int sample = accu >> 12;
 #else
 		unsigned int interPolationFac = (clockDeltaRemainder - sidCyclesPerSampleInt) & 0xFF;
 		accu >>= 7;
